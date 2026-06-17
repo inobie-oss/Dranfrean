@@ -1,0 +1,6 @@
+{
+  "name": "Dranfrean",
+  "description": "A 2D skeletal bone animation builder where you can import custom images, construct bone hierarchies, keyframe timelines, and export animations to MP4.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
