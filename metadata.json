@@ -1,0 +1,8 @@
+{
+  "name": "Dranfrean",
+  "description": "2D Animation Bone Framework for mobile browsers with skeletal rigging, keyframing, and video export.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
