@@ -1,568 +1,758 @@
-import React, { useState } from "react";
-import { Project } from "../types";
-import { Search, Plus, Trash2, ArrowUpDown, Download, ArrowLeft, History, Heart, FileDown, Upload, Info } from "lucide-react";
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
-interface ProjectListProps {
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Plus, Search, Download, Trash2, ArrowUpDown, FileDown, 
+  RefreshCw, Upload, Check, AlertCircle, Sparkles, FolderKanban
+} from 'lucide-react';
+import { Project } from '../types';
+import { computeSkeleton, computeOffsets } from '../utils/skeleton';
+
+interface DashboardProps {
   projects: Project[];
-  onAddProject: (projectData: { name: string; width: number; height: number; backgroundColor: string; fps: number }) => void;
-  onDeleteProject: (id: string) => void;
-  onImportProjects: (imported: Project[]) => void;
-  onSelectProject: (id: string) => void;
+  setProjects: React.Dispatch<React.SetStateAction<Project[]>>;
+  onOpenProject: (id: string) => void;
 }
 
-export const ProjectList: React.FC<ProjectListProps> = ({
-  projects,
-  onAddProject,
-  onDeleteProject,
-  onImportProjects,
-  onSelectProject,
-}) => {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [sortBy, setSortBy] = useState<"name" | "date_new" | "date_old">("date_new");
-  
-  // Selection map for batch operations
+export default function Dashboard({ projects, setProjects, onOpenProject }: DashboardProps) {
+  const [search, setSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
-
-  // Project Creation Modal state
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'bones'>('newest');
+  
+  // Project creation modal states
   const [showAddModal, setShowAddModal] = useState(false);
-  const [projName, setProjName] = useState("");
+  const [projName, setProjName] = useState('');
   const [projWidth, setProjWidth] = useState(800);
   const [projHeight, setProjHeight] = useState(600);
-  const [projCanvasColor, setProjCanvasColor] = useState("#fbc587"); // default warm peach or standard options
-  const [projFPS, setProjFPS] = useState(24);
+  const [projColor, setProjColor] = useState('#ffffff');
+  const [projFps, setProjFps] = useState(12);
+  const [projLength, setProjLength] = useState(48);
+  const [resPreset, setResPreset] = useState<'800x600' | '1080x1080' | '1920x1080' | 'custom'>('800x600');
 
-  // Filter and sort projects list
-  const filteredProjects = React.useMemo(() => {
-    let result = projects.filter((p) =>
-      p.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-    if (sortBy === "name") {
-      result.sort((a, b) => a.name.localeCompare(b.name));
-    } else if (sortBy === "date_new") {
-      result.sort((a, b) => b.updatedAt - a.updatedAt);
-    } else if (sortBy === "date_old") {
-      result.sort((a, b) => a.updatedAt - b.updatedAt);
+  // Toggle presets
+  useEffect(() => {
+    if (resPreset === '800x600') {
+      setProjWidth(800);
+      setProjHeight(600);
+    } else if (resPreset === '1080x1080') {
+      setProjWidth(1080);
+      setProjHeight(1080);
+    } else if (resPreset === '1920x1080') {
+      setProjWidth(1920);
+      setProjHeight(1080);
     }
-    return result;
-  }, [projects, searchTerm, sortBy]);
+  }, [resPreset]);
 
-  // Select all helper
-  const handleSelectAll = (checked: boolean) => {
-    const nextSelected: Record<string, boolean> = {};
-    if (checked) {
-      filteredProjects.forEach((p) => {
-        nextSelected[p.id] = true;
+  // Select all logic
+  const filteredProjects = projects.filter(p => 
+    p.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const isAllSelected = filteredProjects.length > 0 && filteredProjects.every(p => selectedIds[p.id]);
+
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedIds({});
+    } else {
+      const next: Record<string, boolean> = {};
+      filteredProjects.forEach(p => {
+        next[p.id] = true;
       });
+      setSelectedIds(next);
     }
-    setSelectedIds(nextSelected);
   };
 
-  const isAllSelected = filteredProjects.length > 0 && 
-    filteredProjects.every((p) => selectedIds[p.id]);
-
   const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => ({
+    setSelectedIds(prev => ({
       ...prev,
-      [id]: !prev[id],
+      [id]: !prev[id]
     }));
   };
 
-  const selectedCount = Object.values(selectedIds).filter(Boolean).length;
+  // Sorting
+  const sortedProjects = [...filteredProjects].sort((a, b) => {
+    if (sortBy === 'newest') return b.createdAt - a.createdAt;
+    if (sortBy === 'oldest') return a.createdAt - b.createdAt;
+    if (sortBy === 'name') return a.name.localeCompare(b.name);
+    if (sortBy === 'bones') return b.bones.length - a.bones.length;
+    return 0;
+  });
 
-  const handleBatchDelete = () => {
-    if (window.confirm(`Are you sure you want to delete ${selectedCount} projects?`)) {
-      Object.keys(selectedIds).forEach((id) => {
-        if (selectedIds[id]) {
-          onDeleteProject(id);
-        }
-      });
+  // Export selected as a file
+  const handleDownloadSelected = (createNewIds: boolean) => {
+    const active = projects.filter(p => selectedIds[p.id]);
+    if (active.length === 0) {
+      alert('Please select projects first.');
+      return;
+    }
+
+    let payload = active;
+    if (createNewIds) {
+      // Clone projects with new distinct IDs
+      payload = active.map(p => ({
+        ...p,
+        id: `proj_${Math.random().toString(36).substring(2, 9)}`,
+        name: `${p.name} (Copy)`,
+        createdAt: Date.now()
+      }));
+    }
+
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(payload, null, 2));
+    const dlAnchor = document.createElement('a');
+    dlAnchor.setAttribute('href', dataStr);
+    dlAnchor.setAttribute('download', createNewIds ? 'dranfrean_clones.json' : 'dranfrean_exports.json');
+    dlAnchor.click();
+  };
+
+  // Delete selected
+  const handleDeleteSelected = () => {
+    const activeIds = Object.keys(selectedIds).filter(id => selectedIds[id]);
+    if (activeIds.length === 0) {
+      alert('Please select projects to delete.');
+      return;
+    }
+    if (confirm(`Are you sure you want to delete ${activeIds.length} projects?`)) {
+      const remaining = projects.filter(p => !selectedIds[p.id]);
+      setProjects(remaining);
       setSelectedIds({});
     }
   };
 
-  // Export selected projects as JSON file (Download as New)
-  const handleBatchExport = (renamePrefix = false) => {
-    const listToExport = projects.filter((p) => selectedIds[p.id]);
-    if (listToExport.length === 0) return;
-
-    listToExport.forEach((project) => {
-      const exportedProject = { ...project };
-      if (renamePrefix) {
-        exportedProject.name = `Copy of ${project.name}`;
-        exportedProject.id = "proj_" + Math.random().toString(36).substring(2, 9);
-      }
-      
-      const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(
-        JSON.stringify(exportedProject, null, 2)
-      )}`;
-      
-      const downloadAnchor = document.createElement("a");
-      downloadAnchor.setAttribute("href", jsonString);
-      downloadAnchor.setAttribute("download", `${exportedProject.name.replace(/\s+/g, "_")}_project.json`);
-      document.body.appendChild(downloadAnchor);
-      downloadAnchor.click();
-      downloadAnchor.remove();
-    });
+  // Individual Actions
+  const handleDownloadSingle = (p: Project) => {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify([p], null, 2));
+    const dlAnchor = document.createElement('a');
+    dlAnchor.setAttribute('href', dataStr);
+    dlAnchor.setAttribute('download', `${p.name.toLowerCase()}_project.json`);
+    dlAnchor.click();
   };
 
-  // Import project JSON from computer
-  const handleJSONImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    Array.from(files as FileList).forEach((file: File) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        try {
-          const parsed = JSON.parse(event.target?.result as string);
-          // Simple validation coordinates
-          if (parsed && typeof parsed.name === "string" && Array.isArray(parsed.bones)) {
-            // Remap ID if it's imported as a copy, or keep
-            const importedProj: Project = {
-              id: parsed.id || "imported_" + Math.random().toString(36).substring(2, 9),
-              name: parsed.name,
-              width: parsed.width || 800,
-              height: parsed.height || 600,
-              backgroundColor: parsed.backgroundColor || "#ffffff",
-              fps: parsed.fps || 24,
-              bones: parsed.bones || [],
-              images: parsed.images || [],
-              keyframes: parsed.keyframes || [],
-              createdAt: parsed.createdAt || Date.now(),
-              updatedAt: Date.now(),
-            };
-            onImportProjects([importedProj]);
-          } else {
-            alert("Oops! Invalid project structure inside JSON file.");
-          }
-        } catch (error) {
-          alert("Error parsing file. Please check is valid JSON.");
-        }
-      };
-      reader.readAsText(file);
-    });
-    // Clear value
-    e.target.value = "";
+  const handleDuplicateSingle = (p: Project) => {
+    const clone: Project = JSON.parse(JSON.stringify(p));
+    clone.id = `proj_${Math.random().toString(36).substring(2, 9)}`;
+    clone.name = `${p.name} (Copy)`;
+    clone.createdAt = Date.now();
+    setProjects(prev => [clone, ...prev]);
   };
 
-  const handleCreateConfirm = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!projName.trim()) {
-      alert("Please provide a project name.");
-      return;
+  const handleDeleteSingle = (id: string, name: string) => {
+    if (confirm(`Delete project "${name}"?`)) {
+      setProjects(prev => prev.filter(p => p.id !== id));
+      setSelectedIds(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
     }
-    onAddProject({
-      name: projName,
-      width: Number(projWidth) || 800,
-      height: Number(projHeight) || 600,
-      backgroundColor: projCanvasColor,
-      fps: Number(projFPS) || 24,
-    });
-    // Reset form states
-    setProjName("");
-    setShowAddModal(false);
   };
 
-  const handleDownloadSingle = (e: React.MouseEvent, project: Project) => {
-    e.stopPropagation();
-    const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(
-      JSON.stringify(project, null, 2)
-    )}`;
-    const downloadAnchor = document.createElement("a");
-    downloadAnchor.setAttribute("href", jsonString);
-    downloadAnchor.setAttribute("download", `${project.name.replace(/\s+/g, "_")}_project.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+  // Import JSON trigger
+  const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        const importedList = Array.isArray(data) ? data : [data];
+        
+        // Basic validation
+        const verified: Project[] = [];
+        for (const item of importedList) {
+          if (item && item.name && Array.isArray(item.bones)) {
+            verified.push({
+              id: item.id || `proj_${Math.random().toString(36).substring(2, 9)}`,
+              name: item.name,
+              width: Number(item.width) || 800,
+              height: Number(item.height) || 600,
+              color: item.color || '#ffffff',
+              fps: Number(item.fps) || 12,
+              length: Number(item.length) || 48,
+              bones: Array.isArray(item.bones) ? item.bones : [],
+              keyframes: Array.isArray(item.keyframes) ? item.keyframes : [],
+              images: Array.isArray(item.images) ? item.images : [],
+              createdAt: item.createdAt || Date.now()
+            });
+          }
+        }
+
+        if (verified.length > 0) {
+          // Merge imported. Prevent duplicates by ID: If ID matches, overwrite or rename
+          setProjects(prev => {
+            const next = [...prev];
+            verified.forEach(v => {
+              const idx = next.findIndex(p => p.id === v.id);
+              if (idx !== -1) {
+                // overwrite
+                next[idx] = v;
+              } else {
+                next.unshift(v);
+              }
+            });
+            return next;
+          });
+          alert(`Success! Imported ${verified.length} projects successfully.`);
+        } else {
+          alert('No valid projects found in JSON file.');
+        }
+      } catch (err) {
+        alert('Failed to parse project JSON file. Check formatting.');
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // Create Project
+  const handleCreateProject = (e: React.FormEvent) => {
+    e.preventDefault();
+    const finalName = projName.trim() || 'New Animation';
+    
+    const newProj: Project = {
+      id: `proj_${Math.random().toString(36).substring(2, 9)}`,
+      name: finalName,
+      width: projWidth,
+      height: projHeight,
+      color: projColor,
+      fps: projFps,
+      length: projLength,
+      createdAt: Date.now(),
+      bones: [
+        {
+          id: `b_${Math.random().toString(36).substring(2, 5)}`,
+          name: 'Bone 1',
+          parentId: null,
+          x: projWidth / 2,
+          y: projHeight * 0.75,
+          length: 100,
+          baseAngle: -90,
+          color: '#10b981'
+        }
+      ],
+      keyframes: [],
+      images: []
+    };
+
+    setProjects(prev => [newProj, ...prev]);
+    setShowAddModal(false);
+    onOpenProject(newProj.id);
   };
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-4 py-8 flex flex-col gap-6 select-none">
-      {/* 1. Header Branded Banner */}
-      <div className="text-center flex flex-col items-center gap-1">
-        <h1 className="text-5xl md:text-6xl font-serif tracking-tight text-slate-800 font-bold italic select-none">
+    <div className="w-full flex-1 flex flex-col bg-slate-50 text-slate-800 p-4">
+      
+      {/* BRAND HEADER */}
+      <div className="flex flex-col items-center justify-center text-center py-6 pb-4">
+        <h1 className="text-4xl xs:text-5xl font-extrabold tracking-tight text-slate-900 font-serif italic">
           Dranfrean
         </h1>
-        <p className="text-slate-500 font-mono text-sm tracking-wider uppercase">
-          2d animation bone framework
+        <p className="text-[10px] font-mono tracking-[0.25em] text-slate-500 uppercase font-semibold mt-1">
+          2D ANIMATION BONE FRAMEWORK
         </p>
       </div>
 
-      {/* 2. Top search bar panel block of screenshot (pill bar shape) */}
-      <div className="bg-white border-2 border-slate-705/10 rounded-full h-14 shadow-md px-4 flex items-center justify-between gap-3 bg-slate-50 border border-slate-200">
-        <div className="p-1 px-2 text-slate-400">
-          <ArrowLeft className="w-5 h-5 text-slate-500 cursor-pointer hover:text-slate-700" title="Back" />
-        </div>
+      {/* SEARCH AND IMPORT ROW */}
+      <div className="flex items-center gap-2 bg-white rounded-full border border-slate-200 p-1.5 shadow-xs mb-3">
+        <button className="p-1 px-1.5 text-slate-400 hover:text-slate-600">
+          <Search className="w-5 h-5" />
+        </button>
+        <input 
+          type="text"
+          placeholder="Search projects..." 
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 bg-transparent text-sm text-slate-800 placeholder-slate-400 outline-none w-full"
+        />
         
-        <div className="flex-1 flex items-center gap-2 relative">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5" />
-          <input
-            type="text"
-            placeholder="Search projects..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-1.5 rounded-full bg-white text-slate-800 text-sm focus:outline-none border-0 focus:ring-2 focus:ring-indigo-500 shadow-inner"
-          />
-        </div>
-
-        {/* File Import upload invisible target */}
-        <label className="flex items-center gap-1.5 p-2 px-3.5 rounded-full bg-slate-200 hover:bg-slate-300 transition-colors text-slate-700 font-mono text-xs cursor-pointer border border-slate-300">
+        <input 
+          type="file" 
+          ref={fileInputRef} 
+          onChange={handleImportJSON} 
+          accept=".json" 
+          className="hidden" 
+        />
+        <button 
+          onClick={() => fileInputRef.current?.click()}
+          className="bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-full px-3 py-1 text-xs font-semibold flex items-center gap-1.5 transition-all outline-none"
+        >
           <Upload className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Import JSON</span>
-          <input
-            type="file"
-            accept=".json"
-            onChange={handleJSONImport}
-            className="hidden"
-            multiple
-          />
-        </label>
+          <span>Import JSON</span>
+        </button>
       </div>
 
-      {/* 3. Action pill deck matching top gray action board of drawing */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-3.5 bg-slate-100 rounded-xl border border-slate-200 shadow-sm text-xs font-medium text-slate-600">
-        
-        {/* Selection options control */}
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
+      {/* SELECT ALL AND MASS ACTIONS BAR */}
+      <div className="flex flex-col border border-slate-200 bg-[#f8fafc] rounded-2xl p-3 gap-2.5 shadow-2xs mb-4">
+        <div className="flex items-center justify-between">
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 cursor-pointer">
+            <input 
+              type="checkbox" 
               checked={isAllSelected}
-              onChange={(e) => handleSelectAll(e.target.checked)}
-              className="accent-indigo-600 rounded border-slate-300 h-4.5 w-4.5 bg-white"
+              onChange={toggleSelectAll}
+              className="w-4.5 h-4.5 rounded border-slate-300 text-slate-900 focus:ring-slate-400 cursor-pointer"
             />
-            <span className="font-semibold text-slate-700 text-sm">Select all</span>
+            <span>Select all</span>
           </label>
 
-          {selectedCount > 0 && (
-            <span className="bg-indigo-100 text-indigo-700 font-bold px-2 py-0.5 rounded-full text-[11px]">
-              {selectedCount} selected
-            </span>
-          )}
+          {/* Sort Menu */}
+          <div className="flex items-center gap-1 text-xs font-semibold text-slate-500 bg-white border border-slate-200 rounded-lg px-2 py-1">
+            <ArrowUpDown className="w-3 h-3 text-slate-400" />
+            <select 
+              value={sortBy} 
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="bg-transparent outline-none cursor-pointer text-slate-600 pr-1"
+            >
+              <option value="newest">Newest First</option>
+              <option value="oldest">Oldest First</option>
+              <option value="name">Name A-Z</option>
+              <option value="bones">Bones Count</option>
+            </select>
+          </div>
         </div>
 
-        {/* Batch Operations Options (Only enabled when selection exists) */}
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => handleBatchExport(true)}
-            disabled={selectedCount === 0}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded bg-white border border-slate-300 shadow-sm transition-all text-[11px] ${
-              selectedCount === 0
-                ? "opacity-50 cursor-not-allowed"
-                : "hover:bg-slate-50 hover:text-slate-800 active:scale-95"
-            }`}
-            title="Saves a duplicate copy of highlighted files"
+        {/* Mass Actions buttons */}
+        <div className="grid grid-cols-3 gap-1.5">
+          <button 
+            onClick={() => handleDownloadSelected(true)}
+            className="bg-white border border-slate-200 hover:bg-slate-50 text-[10px] sm:text-xs text-slate-700 font-semibold py-1.5 px-2 rounded-xl flex items-center justify-center gap-1 transition-all"
           >
-            <Download className="w-3.5 h-3.5" />
+            <FolderKanban className="w-3.5 h-3.5 text-slate-400" />
             <span>Download as new</span>
           </button>
-
-          <button
-            onClick={() => handleBatchExport(false)}
-            disabled={selectedCount === 0}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded bg-white border border-slate-300 shadow-sm transition-all text-[11px] ${
-              selectedCount === 0
-                ? "opacity-50 cursor-not-allowed"
-                : "hover:bg-slate-50 hover:text-slate-800 active:scale-95"
-            }`}
-            title="Saves project matching current settings"
+          
+          <button 
+            onClick={() => handleDownloadSelected(false)}
+            className="bg-white border border-slate-200 hover:bg-slate-50 text-[10px] sm:text-xs text-slate-700 font-semibold py-1.5 px-2 rounded-xl flex items-center justify-center gap-1 transition-all"
           >
-            <FileDown className="w-3.5 h-3.5" />
-            <span>Download and overwrite</span>
+            <FileDown className="w-3.5 h-3.5 text-slate-400" />
+            <span>Overwrite download</span>
           </button>
-
-          <button
-            onClick={handleBatchDelete}
-            disabled={selectedCount === 0}
-            className={`flex items-center gap-1 px-2 py-1.5 rounded transition-all text-[11px] font-semibold ${
-              selectedCount === 0
-                ? "opacity-40 cursor-not-allowed text-slate-400"
-                : "bg-red-50 text-red-600 hover:bg-red-100 active:scale-95 border border-red-200"
-            }`}
+          
+          <button 
+            onClick={handleDeleteSelected}
+            className="bg-red-50 hover:bg-red-100 border border-red-200 text-[10px] sm:text-xs text-red-600 font-semibold py-1.5 px-2 rounded-xl flex items-center justify-center gap-1 transition-all"
           >
             <Trash2 className="w-3.5 h-3.5" />
             <span>Delete Selected</span>
           </button>
-
-          {/* Sort selector dropdown */}
-          <div className="flex items-center gap-1 bg-white border border-slate-300 rounded px-2.5 py-1.5 shadow-xs ml-1">
-            <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
-              className="bg-transparent border-0 p-0 text-[11px] text-slate-600 focus:outline-none focus:ring-0 cursor-pointer font-medium"
-            >
-              <option value="date_new">Upload date (Newest)</option>
-              <option value="date_old">Upload date (Oldest)</option>
-              <option value="name">Alphabetical</option>
-            </select>
-          </div>
         </div>
       </div>
 
-      {/* 4. Project Creation Launch button and counter */}
-      <div className="flex justify-between items-center bg-white p-3.5 px-5 rounded-xl border border-slate-200/85 shadow-xs">
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="bg-slate-800 hover:bg-slate-750 font-bold text-sm tracking-wide text-white px-5 py-2.5 rounded-lg flex items-center gap-2 transition-all hover:shadow-md cursor-pointer"
-          id="add_project_btn"
+      {/* PROJECT HEADER & ADD ROW */}
+      <div className="flex items-center justify-between bg-white border border-slate-100 p-2.5 rounded-2xl shadow-3xs mb-4">
+        <button 
+          onClick={() => {
+            setProjName('');
+            setResPreset('800x600');
+            setProjColor('#ffffff');
+            setProjFps(12);
+            setProjLength(48);
+            setShowAddModal(true);
+          }}
+          className="bg-[#132237] hover:bg-[#1e3454] active:bg-[#0c1827] text-white px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-md cursor-pointer"
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="w-4.5 h-4.5" />
           <span>Add project</span>
         </button>
 
-        <span className="font-semibold text-slate-600 bg-slate-100 py-1.5 px-3.5 rounded-full border border-slate-200 font-mono text-xs">
-          {projects.length} {projects.length === 1 ? "project" : "projects"}
+        <span className="text-xs font-bold text-indigo-600/90 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-full font-mono">
+          {projects.length} {projects.length === 1 ? 'project' : 'projects'}
         </span>
       </div>
 
-      {/* 5. Projects list Grid layout */}
-      {filteredProjects.length === 0 ? (
-        <div className="bg-slate-50 border-2 border-dashed border-slate-200 rounded-3xl p-16 flex flex-col items-center gap-4 text-center">
-          <div className="h-16 w-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 border border-slate-200">
-            <Heart className="w-8 h-8 fill-slate-200 text-slate-400" />
+      {/* PROJECTS LIST GRID */}
+      <div className="flex-1 overflow-y-auto">
+        {sortedProjects.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center text-slate-400 gap-4">
+            <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center border border-slate-200">
+              <Plus className="w-6 h-6 text-slate-400" />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-slate-700">No animations found</p>
+              <p className="text-xs text-slate-400 mt-1">Tap "+ Add project" to initialize skeletal rig.</p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-lg font-bold text-slate-800">No projects found</h3>
-            <p className="text-sm text-slate-400 max-w-sm mt-1">
-              Add your first 2D skeletal skeletal project using the button above or import key settings!
-            </p>
-          </div>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="text-white bg-indigo-600 hover:bg-indigo-500 font-bold text-xs py-2 px-5 rounded-lg shadow transition-colors mt-2"
-          >
-            Create first project
-          </button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5">
-          {filteredProjects.map((p) => {
-            const isSelected = !!selectedIds[p.id];
-
-            return (
-              <div
+        ) : (
+          <div className="grid grid-cols-2 gap-3 pb-8">
+            {sortedProjects.map(p => (
+              <ProjectCard 
                 key={p.id}
-                onClick={() => onSelectProject(p.id)}
-                className={`group relative bg-white border-2 rounded-2xl overflow-hidden hover:shadow-lg transition-all cursor-pointer flex flex-col select-none ${
-                  isSelected ? "border-indigo-600 ring-2 ring-indigo-100" : "border-slate-200"
-                }`}
-              >
-                {/* Checkbox item overlay */}
-                <div
-                  className="absolute top-2.5 left-2.5 z-10 p-1"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    onChange={() => toggleSelect(p.id)}
-                    className="accent-indigo-600 rounded border-slate-300 h-4.5 w-4.5 bg-white drop-shadow"
-                  />
-                </div>
+                project={p}
+                isSelected={!!selectedIds[p.id]}
+                onToggleSelect={() => toggleSelect(p.id)}
+                onOpen={() => onOpenProject(p.id)}
+                onDownload={() => handleDownloadSingle(p)}
+                onDuplicate={() => handleDuplicateSingle(p)}
+                onDelete={() => handleDeleteSingle(p.id, p.name)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
-                {/* Core illustration drawing holder (matches heart on peach color background of mock screenshot) */}
-                <div
-                  className="w-full aspect-[4/5] flex items-center justify-center relative overflow-hidden select-none transition-colors"
-                  style={{ backgroundColor: p.backgroundColor || "#fbc587" }}
-                >
-                  {/* Bone armature schematic visualizer background */}
-                  <div className="absolute inset-0 opacity-10 bg-[linear-gradient(rgba(0,0,0,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(0,0,0,0.1)_1px,transparent_1px)] bg-[size:16px_16px]" />
-
-                  {/* Icon illustration: Standard nice drawing fallback */}
-                  <div className="relative z-1 flex flex-col items-center gap-1 transform group-hover:scale-110 transition-transform">
-                    {p.images.length > 0 ? (
-                      <img
-                        src={p.images[0].url}
-                        alt="Project asset thumbnail"
-                        referrerPolicy="no-referrer"
-                        className="w-20 h-20 object-contain drop-shadow-md rounded-lg max-h-32"
-                      />
-                    ) : (
-                      <Heart className="w-16 h-16 text-rose-500 fill-rose-500/80 drop-shadow-[0_4px_12px_rgba(244,63,94,0.4)]" />
-                    )}
-                  </div>
-                  
-                  {/* Frame counts overlay stamp */}
-                  <span className="absolute bottom-2 right-2 bg-slate-900/80 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded leading-none">
-                    {p.bones.length} bones / {p.keyframes.length} keys
-                  </span>
-                </div>
-
-                {/* Card descriptions info */}
-                <div className="p-3 border-t border-slate-100 bg-white flex flex-col gap-1.5">
-                  <span className="font-bold text-slate-800 text-sm truncate select-none leading-none pt-0.5 group-hover:text-indigo-600 transition-colors">
-                    {p.name}
-                  </span>
-                  
-                  {/* Interactive card helper utilities */}
-                  <div className="flex items-center justify-between mt-1 pt-2 border-t border-slate-100">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={(e) => handleDownloadSingle(e, p)}
-                        className="p-1 rounded bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-all"
-                        title="Download Project JSON"
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                      </button>
-                      <span className="p-1 rounded bg-slate-50 text-slate-400">
-                        <History className="w-3.5 h-3.5" />
-                      </span>
-                    </div>
-
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (window.confirm(`Delete project "${p.name}"? This action is irreversible.`)) {
-                          onDeleteProject(p.id);
-                        }
-                      }}
-                      className="text-xs text-slate-400 hover:text-red-600 transition-colors font-semibold"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* 6. CREATE PROJECT POPUP DIALOG WINDOW (Strict Reference Replica) */}
+      {/* "+ ADD PROJECT" DIALOG POP-UP */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
-          <div className="bg-zinc-300 border-2 border-zinc-500 rounded-2xl w-full max-w-sm overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)] transform animate-scale-up border-slate-400 text-zinc-800 font-sans">
-            
-            {/* Header layout */}
-            <div className="bg-zinc-400 px-4 py-2.5 border-b border-zinc-500 text-center font-bold text-zinc-900 flex justify-between items-center">
-              <span>Create Project</span>
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="text-zinc-600 hover:text-zinc-900 font-bold text-sm"
-              >
-                ✕
-              </button>
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-3xl w-full max-w-sm border border-slate-100 shadow-2xl p-6 relative flex flex-col gap-4 text-left">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Configure Project</h3>
+              <p className="text-xs text-slate-400">Specify bone canvas properties & dimensions</p>
             </div>
 
-            <form onSubmit={handleCreateConfirm} className="p-5 flex flex-col gap-4">
-              
-              {/* Project Title Entry */}
+            <form onSubmit={handleCreateProject} className="flex flex-col gap-4">
+              {/* Project Name */}
               <div className="flex flex-col gap-1">
-                <label className="text-xs font-bold text-zinc-700 uppercase">Project Title</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. My Animation character"
+                <label className="text-xs font-bold text-slate-500">Project Name</label>
+                <input 
+                  type="text" 
                   value={projName}
                   onChange={(e) => setProjName(e.target.value)}
-                  className="w-full bg-zinc-100 border border-zinc-400 rounded px-2.5 py-1.5 text-sm font-semibold focus:outline-none focus:border-zinc-700"
+                  placeholder="e.g. HeartBeat cycle"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500-xs transition-all"
+                  required
                 />
               </div>
 
-              {/* Resolution options section */}
-              <div className="flex flex-col gap-1 bg-zinc-200 p-2.5 rounded border border-zinc-400">
-                <span className="text-xs font-bold text-zinc-800 text-center block mb-1.5">Resolution</span>
-                
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] text-zinc-500 mb-0.5">Wide (px)</span>
-                    <input
-                      type="number"
-                      required
-                      min={100}
-                      max={4000}
+              {/* Preset buttons */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-500">Canvas Dimensions</label>
+                <div className="grid grid-cols-3 gap-1 mb-2">
+                  {(['800x600', '1080x1080', '1920x1080'] as const).map(preset => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setResPreset(preset)}
+                      className={`text-[10px] font-bold py-1.5 rounded-lg border transition-all ${
+                        resPreset === preset 
+                          ? 'border-indigo-600 bg-indigo-50 text-indigo-700' 
+                          : 'border-slate-200 text-slate-600 bg-white hover:bg-slate-50'
+                      }`}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Manual Resolution inputs */}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 flex flex-col">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase">Width</span>
+                    <input 
+                      type="number" 
                       value={projWidth}
-                      onChange={(e) => setProjWidth(Math.max(100, parseInt(e.target.value) || 800))}
-                      placeholder="Wide"
-                      className="w-full bg-zinc-100 border border-zinc-400 rounded px-2 py-1 text-xs font-bold text-center text-zinc-900 focus:outline-none"
+                      onChange={(e) => {
+                        setResPreset('custom');
+                        setProjWidth(Math.max(100, Number(e.target.value)));
+                      }}
+                      className="bg-transparent text-xs font-bold text-slate-700 outline-none w-full"
                     />
                   </div>
-                  
-                  <div className="flex flex-col">
-                    <span className="text-[10px] text-zinc-500 mb-0.5">Height (px)</span>
-                    <input
-                      type="number"
-                      required
-                      min={100}
-                      max={4000}
+                  <span className="text-xs font-bold text-slate-400 font-mono">×</span>
+                  <div className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 flex flex-col">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase">Height</span>
+                    <input 
+                      type="number" 
                       value={projHeight}
-                      onChange={(e) => setProjHeight(Math.max(100, parseInt(e.target.value) || 600))}
-                      placeholder="Height"
-                      className="w-full bg-zinc-100 border border-zinc-400 rounded px-2 py-1 text-xs font-bold text-center text-zinc-900 focus:outline-none"
+                      onChange={(e) => {
+                        setResPreset('custom');
+                        setProjHeight(Math.max(100, Number(e.target.value)));
+                      }}
+                      className="bg-transparent text-xs font-bold text-slate-700 outline-none w-full"
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Color Picks option mapping drawing color checkboxes */}
-              <div className="grid grid-cols-2 gap-4">
+              {/* Color options */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-slate-500">Canvas Background Color</label>
+                <div className="flex items-center gap-1.5">
+                  {(['#ffffff', '#ffcc80', '#ffb74d', '#e0f2fe', '#0f172a'] as const).map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setProjColor(c)}
+                      className={`w-7 h-7 rounded-lg border transition-all flex items-center justify-center ${
+                        projColor === c 
+                          ? 'border-indigo-600 ring-2 ring-indigo-100 scale-110' 
+                          : 'border-slate-300'
+                      }`}
+                      style={{ backgroundColor: c }}
+                    >
+                      {projColor === c && (
+                        <Check className={`w-3.5 h-3.5 ${c === '#ffffff' || c === '#ffcc80' || c === '#ffb74d' ? 'text-slate-800' : 'text-white'}`} />
+                      )}
+                    </button>
+                  ))}
+                  
+                  {/* Custom color input picker */}
+                  <input 
+                    type="color" 
+                    value={projColor}
+                    onChange={(e) => setProjColor(e.target.value)}
+                    className="w-7 h-7 rounded-lg cursor-pointer border border-slate-300 p-0 overflow-hidden" 
+                  />
+                  <span className="text-xs font-mono font-bold text-slate-400 uppercase">{projColor}</span>
+                </div>
+              </div>
+
+              {/* FPS slider & duration */}
+              <div className="grid grid-cols-2 gap-2">
                 <div className="flex flex-col gap-1">
-                  <span className="text-xs font-bold text-zinc-700">Canvas color</span>
-                  <div className="flex items-center gap-1.5">
-                    {/* Peach preset (matches illustration template colors) */}
-                    <button
-                      type="button"
-                      onClick={() => setProjCanvasColor("#fbc587")}
-                      className={`h-7 w-7 rounded border ${projCanvasColor === "#fbc587" ? "ring-2 ring-indigo-500 border-white" : "border-zinc-400"}`}
-                      style={{ backgroundColor: "#fbc587" }}
-                      title="Warm Peach"
-                    />
-                    {/* White preset */}
-                    <button
-                      type="button"
-                      onClick={() => setProjCanvasColor("#ffffff")}
-                      className={`h-7 w-7 rounded border ${projCanvasColor === "#ffffff" ? "ring-2 ring-indigo-500 border-white" : "border-zinc-400"}`}
-                      style={{ backgroundColor: "#ffffff" }}
-                      title="Pure White"
-                    />
-                    {/* Black preset */}
-                    <button
-                      type="button"
-                      onClick={() => setProjCanvasColor("#000000")}
-                      className={`h-7 w-7 rounded border ${projCanvasColor === "#000000" ? "ring-2 ring-indigo-500 border-white" : "border-zinc-400"}`}
-                      style={{ backgroundColor: "#000000" }}
-                      title="Deep Black"
-                    />
-                    {/* Custom Picker option */}
-                    <input
-                      type="color"
-                      value={projCanvasColor}
-                      onChange={(e) => setProjCanvasColor(e.target.value)}
-                      className="h-7 w-8 bg-transparent border-0 cursor-pointer p-0"
-                      title="Custom Palette Color"
-                    />
-                  </div>
+                  <label className="text-xs font-bold text-slate-500">FPS ({projFps})</label>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="60" 
+                    value={projFps}
+                    onChange={(e) => setProjFps(Number(e.target.value))}
+                    className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                  />
                 </div>
 
-                {/* Framerate field */}
                 <div className="flex flex-col gap-1">
-                  <span className="text-xs font-bold text-zinc-700">Fps</span>
-                  <input
-                    type="number"
-                    required
-                    min={1}
-                    max={60}
-                    value={projFPS}
-                    onChange={(e) => setProjFPS(Math.max(1, Math.min(60, parseInt(e.target.value) || 24)))}
-                    placeholder="00"
-                    className="w-full bg-zinc-100 border border-zinc-400 rounded px-2.5 py-1 text-center font-bold text-zinc-900 text-sm focus:outline-none focus:border-zinc-700"
+                  <label className="text-xs font-bold text-slate-500">Length ({projLength}f)</label>
+                  <input 
+                    type="number" 
+                    min="2" 
+                    max="1000" 
+                    value={projLength}
+                    onChange={(e) => setProjLength(Math.max(2, Number(e.target.value)))}
+                    className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1 font-semibold text-xs outline-none focus:border-indigo-500"
                   />
                 </div>
               </div>
 
-              {/* Action confirmation button replica */}
-              <button
-                type="submit"
-                className="w-full mt-2 py-2 bg-white hover:bg-zinc-50 border-2 border-zinc-700 hover:border-zinc-900 rounded font-bold text-zinc-900 shadow transition-colors font-mono tracking-wide"
-              >
-                Confirmation
-              </button>
+              {/* Confirmation buttons */}
+              <div className="flex items-center gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="flex-1 text-slate-500 hover:text-slate-700 bg-slate-100 hover:bg-slate-200 font-bold py-2.5 rounded-xl text-xs text-center border border-slate-200 transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-[#132237] hover:bg-[#1e3454] text-white font-bold py-2.5 rounded-xl text-xs text-center shadow-md hover:shadow-lg transition-all cursor-pointer"
+                >
+                  Create Project
+                </button>
+              </div>
             </form>
           </div>
         </div>
       )}
     </div>
   );
-};
+}
+
+/* PROJECT CARD SUBCOMPONENT */
+interface CardProps {
+  key?: string;
+  project: Project;
+  isSelected: boolean;
+  onToggleSelect: () => void;
+  onOpen: () => void;
+  onDownload: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+}
+
+function ProjectCard({ project, isSelected, onToggleSelect, onOpen, onDownload, onDuplicate, onDelete }: CardProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Render thumbnail canvas representing the bone skeletal state
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Clear
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Fill project color
+    ctx.fillStyle = project.color;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Save context
+    ctx.save();
+    
+    // Scale drawings so they fit in 140x170 box
+    const scaleX = canvas.width / project.width;
+    const scaleY = canvas.height / project.height;
+    const scale = Math.min(scaleX, scaleY) * 0.95;
+    
+    // Center drawings
+    const shiftX = (canvas.width - project.width * scale) / 2;
+    const shiftY = (canvas.height - project.height * scale) / 2;
+    
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-project.width / 2, -project.height / 2);
+
+    // Grid draw if color is pale or dark
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+    for (let x = 0; x < project.width; x += 40) {
+      ctx.fillRect(x, 0, 1, project.height);
+    }
+    for (let y = 0; y < project.height; y += 40) {
+      ctx.fillRect(0, y, project.width, 1);
+    }
+
+    // Solve skeleton starting state values
+    const offsets = computeOffsets(project.keyframes, 0, project.bones.map(b => b.id));
+    const skeleton = computeSkeleton(project.bones, offsets);
+
+    // Draw images
+    project.images.forEach(img => {
+      const boneJoint = skeleton[img.boneId || ''];
+      
+      const drawImageElement = () => {
+        const i = new Image();
+        i.src = img.src;
+        i.onload = () => {
+          if (!canvasRef.current) return;
+          // Re-trigger redraw
+        };
+        // Draw heart programmatically if loaded, else use local drawing
+        ctx.save();
+        if (boneJoint) {
+          ctx.translate(boneJoint.start.x, boneJoint.start.y);
+          ctx.rotate(boneJoint.absoluteAngle);
+          ctx.translate(img.x, img.y);
+          ctx.rotate((img.rotation * Math.PI) / 180);
+          ctx.scale(img.scale, img.scale);
+        } else {
+          ctx.translate(project.width / 2, project.height / 2);
+        }
+        
+        ctx.fillStyle = project.id === 'illustration' ? '#b91c1c' : '#ec4899';
+        // Draw miniature vector heart directly to ensure it renders instantly
+        ctx.beginPath();
+        ctx.moveTo(0, -30);
+        ctx.bezierCurveTo(0, -35, -15, -55, -45, -55);
+        ctx.bezierCurveTo(-85, -55, -85, -5, -85, -5);
+        ctx.bezierCurveTo(-85, 35, -45, 75, 0, 105);
+        ctx.bezierCurveTo(45, 75, 85, 35, 85, -5);
+        ctx.bezierCurveTo(85, -5, 85, -55, 45, -55);
+        ctx.bezierCurveTo(15, -55, 0, -35, 0, -30);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      };
+      drawImageElement();
+    });
+
+    // Draw Bones overlay
+    Object.values(skeleton).forEach(joint => {
+      // Draw joint connection line
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 14;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(joint.start.x, joint.start.y);
+      ctx.lineTo(joint.end.x, joint.end.y);
+      ctx.stroke();
+
+      // Yellow core
+      ctx.strokeStyle = '#34d399';
+      ctx.lineWidth = 6;
+      ctx.stroke();
+
+      // Joint circles
+      ctx.fillStyle = '#111827';
+      ctx.beginPath();
+      ctx.arc(joint.start.x, joint.start.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(joint.end.x, joint.end.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    });
+
+    ctx.restore();
+  }, [project]);
+
+  return (
+    <div className="relative bg-white rounded-3xl border border-slate-200 overflow-hidden flex flex-col hover:border-slate-300 p-2 text-left group animate-fade-in shadow-xs">
+      
+      {/* Top Checkbox Overlay */}
+      <div className="absolute top-3.5 left-3.5 z-10">
+        <input 
+          type="checkbox" 
+          checked={isSelected}
+          onChange={onToggleSelect}
+          className="w-4.5 h-4.5 rounded border-slate-300 text-slate-900 focus:ring-slate-400 cursor-pointer shadow-xs"
+        />
+      </div>
+
+      {/* Render Canvas Thumbnail in high ratio */}
+      <div 
+        onClick={onOpen}
+        className="aspect-square bg-slate-100 rounded-2xl relative overflow-hidden cursor-pointer flex items-center justify-center border border-slate-100"
+      >
+        <canvas 
+          ref={canvasRef} 
+          width={180} 
+          height={180} 
+          className="w-full h-full object-cover"
+        />
+
+        {/* Floating bones/keys badge inside card */}
+        <div className="absolute bottom-1.5 right-1.5 bg-slate-900/80 backdrop-blur-xs text-[9px] font-bold text-white px-2 py-0.5 rounded-md font-mono select-none">
+          {project.bones.length} {project.bones.length === 1 ? 'bone' : 'bones'} / {project.keyframes.length} {project.keyframes.length === 1 ? 'key' : 'keys'}
+        </div>
+      </div>
+
+      {/* Info Label & Title */}
+      <div className="p-2 pt-2.5">
+        <h4 
+          onClick={onOpen}
+          className="text-sm font-bold text-slate-800 tracking-tight cursor-pointer truncate max-w-full hover:text-indigo-600 transition-colors"
+        >
+          {project.name}
+        </h4>
+        
+        {/* Footer row containing action icons */}
+        <div className="flex items-center justify-between mt-2.5 text-slate-400 border-t border-slate-100 pt-2">
+          <div className="flex items-center gap-1.5">
+            <button 
+              onClick={onDownload}
+              title="Download Project Backup"
+              className="p-1 text-slate-400 hover:text-slate-600 active:scale-90 transition-all rounded hover:bg-slate-50"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={onDuplicate}
+              title="Duplicate Project Template"
+              className="p-1 text-slate-400 hover:text-slate-600 active:scale-90 transition-all rounded hover:bg-slate-50"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </div>
+
+          <button 
+            onClick={onDelete}
+            className="text-xs text-red-400 hover:text-red-600 font-semibold px-1 rounded transition-colors cursor-pointer"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
